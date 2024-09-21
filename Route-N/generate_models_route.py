@@ -63,7 +63,6 @@ query xegr: OutPort;
 weak_route_integrity_i = """
 (**** Weak Route Integrity ****)
 query
-  xegr: OutPort;
 """
 
 controller_declaration = """
@@ -151,16 +150,23 @@ for i in range(1, n + 1):
         for m in range(1, i - 1):
             f.write("  event(ends" + str(m) + ") ==> event(begins" + str(m) + "(xegr));\n")
         f.write("  event(ends" + str(i - 1) + ") ==> event(begins" + str(i - 1) + "(xegr)).\n")
-        f.write(weak_route_integrity_i)
-        f.write("  event(ends" + str(i - 1) + ") ==> (event(beginsi(xegr)) && ")
-        for j in range(1, i - 1):
-            f.write("event(begins" + str(j) + "(xegr)) && ")
-        f.write("event(begins" + str(i - 1) + "(xegr))")
-        f.write(").\n\n")
+
         ports = "free egri, egre"
         for j in range(1, i):
             ports = ports + ", egr" + str(j)
         f.write(ports + ": OutPort.\n")
+
+        f.write(weak_route_integrity_i)
+        xports = "  xegri, xegre"
+        for j in range(1, i):
+            xports = xports + ", xegr" + str(j)
+        f.write(xports + ": OutPort;\n")
+        f.write("  event(ends" + str(i - 1) + ") ==> (event(beginsi(xegri)) && ")
+        for j in range(1, i - 1):
+            f.write("event(begins" + str(j) + "(xegr" + str(j) +")) && ")
+        f.write("event(begins" + str(i - 1) + "(xegr" + str(i - 1)+"))")
+        f.write(").\n\n")
+        
         if i > 1:
             keys_process_controller = keys_process_controller + ", sk" + str(i - 1) + ": skey"
             keys_main_types = keys_main_types + "new sk" + str(i - 1) + ": skey; "
