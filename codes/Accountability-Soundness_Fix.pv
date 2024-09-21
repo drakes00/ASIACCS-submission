@@ -1,0 +1,87 @@
+(*set preciseActions = true.*)
+
+free c:channel.
+
+type skey.
+type OutPort.
+free egr1, egr2: OutPort.
+
+(********** Equational Theory **************)
+fun MAC(skey,bitstring):bitstring.
+fun h(bitstring, bitstring, nat): bitstring.
+fun senc(bitstring,skey):bitstring.
+reduc forall x:bitstring, k:skey; sdec(senc(x,k),k)=x.
+
+(**************)
+set nounifIgnoreNtimes = 4.
+noselect x: bitstring; attacker(senc( *x, new sk0))[ignoreAFewTimes].
+
+(********** Events Declaration *************)
+event error.
+event error0.
+event error1.
+event error2.
+event sanityc.
+
+
+(********** Queries ***********************)
+(***** Sanity Check and reachbility of computation *******)
+query
+  event(sanityc);
+  event(error0);
+  event(error1);
+  event(error2).
+
+(* Controller process *)
+let ProcessController(sk0: skey, sk1: skey, sk2: skey) =
+    in(c, (xegr1: OutPort, xegr2: OutPort));
+    if ((xegr1 = egr1) && (xegr2 = egr2)) || ((xegr1 = egr2) && (xegr2 = egr1)) then
+    in(c, (p_encrypted: bitstring, n_s0: nat));
+    let p = sdec(p_encrypted, sk0) in
+
+    new F: bitstring;
+    new t: bitstring;
+
+    let B = (F, t) in
+
+    let C = (F, n_s0) in
+    let PVF0 = MAC(sk0, C) in
+    let PVF1 = MAC(sk1, (PVF0, F, n_s0 + 1)) in
+    let PVF2 = MAC(sk2, (PVF1, F, n_s0 + 2)) in
+
+    let FE0 = B in
+    let MAC1 = MAC(sk1, (xegr1, FE0, B, h(p, PVF0, n_s0))) in
+    let FE1 = (xegr1, MAC1) in
+    let MAC2 = MAC(sk2, (xegr2, FE1, B, h(p, PVF1, n_s0 + 1))) in
+    let FE2 = (xegr2, MAC2) in
+
+    let y = senc((F, t, xegr1, MAC1, xegr2, MAC2), sk0) in
+    out(c, y);
+    in(c, (=F, xPV2: bitstring));
+    if xPV2 = PVF2 then
+       event sanityc
+    else
+      event error;
+      in(c, xPV0: bitstring);
+      if (xPV0 <> PVF0) then
+        (
+         event error0
+        )
+      else
+        (
+         in(c, xPV1: bitstring);
+         if (xPV1 <> PVF1) then
+             event error1
+         else
+             event error2
+        ).
+
+
+(* Main Process *)
+process
+    !(
+    new sk0:skey;
+    new sk1:skey;
+    new sk2:skey;
+    out(c, (sk0, sk1, sk2));
+    !ProcessController(sk0,sk1,sk2))

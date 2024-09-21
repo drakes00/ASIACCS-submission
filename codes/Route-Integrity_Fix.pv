@@ -1,0 +1,148 @@
+set preciseActions = true.
+
+free c:channel.
+free c_s0:channel [private].
+free c_s2:channel [private].
+
+type skey.
+type OutPort.
+free egr0, egr1, egr2: OutPort.
+
+(********** Equational Theory **************)
+fun MAC(skey,bitstring):bitstring.
+fun h(bitstring, bitstring, nat): bitstring.
+fun senc(bitstring,skey):bitstring.
+reduc forall x:bitstring, k:skey; sdec(senc(x,k),k)=x.
+
+(********** Events Declaration *************)
+event SeqUniqueness(bitstring, nat).
+event beginS0(OutPort).
+event endS0.
+event beginS1(OutPort).
+event endS1.
+event beginS2(OutPort).
+event sanityS0.
+event sanityS1.
+event sanityS2.
+event sanityc.
+event KO.
+
+
+(********** Restriction needed to guarentee uniqueness of sequence number *********************)
+restriction st: bitstring, st': bitstring, alpha: nat; (event(SeqUniqueness(st, alpha)) && event(SeqUniqueness(st', alpha))) ==> st = st'.
+
+
+(********** Queries ***********************)
+(***** Sanity Cheks *******)
+query
+  event(sanityS0);
+  event(sanityS1);
+  event(sanityS2);
+  event(sanityc).
+
+(**** Local Routes Integrity ****) (* Those properties are trivially verified within our model *)
+query
+  xegr:OutPort;
+  event(beginS1(xegr)) ==> event(endS0);
+  event(beginS2(xegr)) ==> event(endS1).
+
+
+(**** Transitional Routes Integrity ****)
+query
+  xegr:OutPort;
+  event(endS0) ==> event(beginS0(xegr));
+  event(endS1) ==> event(beginS1(xegr)).
+
+
+(*** Weak Route Integrity ****)
+query
+  xegr1 :OutPort, xegr2 :OutPort, xegr3 :OutPort;
+  event(endS1) ==> (event(beginS0(xegr1)) && event(beginS1(xegr2))).
+
+(* Controller process *)
+let ProcessController(sk0: skey, sk1: skey, sk2: skey) =
+    in(c, (xegr1: OutPort, xegr2: OutPort));
+    if ((xegr1 = egr1) && (xegr2 = egr2)) || ((xegr1 = egr2) && (xegr2 = egr1)) then
+    in(c_s0, (p_encrypted: bitstring, n_s0: nat));
+    let p = sdec(p_encrypted, sk0) in
+
+    new F: bitstring;
+    new t: bitstring;
+
+    let B = (F, t) in
+
+    let C = (F, n_s0) in
+    let PVF0 = MAC(sk0, C) in
+    let PVF1 = MAC(sk1, (PVF0, F, n_s0 + 1)) in
+    let PVF2 = MAC(sk2, (PVF1, F, n_s0 + 2)) in
+
+    let FE0 = B in
+    let MAC1 = MAC(sk1, (xegr1, FE0, B, h(p, PVF0, n_s0))) in
+    let FE1 = (xegr1, MAC1) in
+    let MAC2 = MAC(sk2, (xegr2, FE1, B, h(p, PVF1, n_s0 + 1))) in
+    let FE2 = (xegr2, MAC2) in
+
+    let y = senc((F, t, xegr1, MAC1, xegr2, MAC2), sk0) in
+    out(c_s0, y);
+
+    in(c_s2, (=F, xPV2: bitstring));
+    if xPV2 = PVF2 then
+       event sanityc
+    else
+      event KO.
+
+(* Switch 0 process *)
+let ProcessS0(sk0: skey) =
+    in(c, n_s0: nat);
+    new st[]:bitstring;
+    event SeqUniqueness(st, n_s0);
+    new p: bitstring;
+    let p_encrypted = senc(p, sk0) in
+    out(c_s0, (p_encrypted, n_s0));
+    in(c_s0, y: bitstring);
+
+    let (F: bitstring, t: bitstring, xegr1: OutPort, MAC1: bitstring, xegr2: OutPort, MAC2: bitstring) = sdec(y, sk0) in
+    let B = (F, t) in
+    let MAC0 = MAC(sk0, B) in
+    let C = (F, n_s0) in
+    let PVF0 = MAC(sk0, C) in
+    event beginS0(egr0);
+    event sanityS0;
+    out(c, (F, t, n_s0, PVF0, xegr1, MAC1, xegr2, MAC2, p)).
+
+
+(* Switch 1 process *)
+let ProcessS1(sk1: skey)  =
+    in(c, (F: bitstring, t: bitstring, n_s0: nat, PVF0: bitstring, xegr1: OutPort, MAC1: bitstring, xegr2: OutPort, MAC2: bitstring, p: bitstring));
+    let B = (F, t) in
+    if (MAC1 = MAC(sk1, (xegr1, B, B, h(p, PVF0, n_s0)))) then
+            event endS0;
+            let n_s1 = n_s0 + 1 in
+            let PVF1 = MAC(sk1, (PVF0, F, n_s1)) in
+            event beginS1(xegr1);
+            event sanityS1;
+            out(c, (F, t, n_s1, PVF1, xegr1, MAC1, xegr2, MAC2, p)).
+
+
+
+(* Switch 2 process *)
+let ProcessS2(sk2: skey) =
+    in(c, (F: bitstring, t: bitstring, n_s1: nat, PVF1: bitstring, xegr1: OutPort, MAC1: bitstring, xegr2: OutPort, MAC2: bitstring, p: bitstring));
+    let B = (F, t) in
+    let FE1 = (xegr1, MAC1) in
+    if (MAC2 = MAC(sk2, (xegr2, FE1, B, h(p, PVF1, n_s1)))) then
+            event endS1;
+            let n_s2 = n_s1 + 1 in
+            let PVF2 = MAC(sk2, (PVF1, F, n_s2)) in
+            event beginS2(xegr2);
+            event sanityS2;
+            out(c_s2, (F, PVF2)).
+
+
+(* Main Process *)
+process
+    !(
+    new sk0:skey;
+    new sk1:skey;
+    new sk2:skey;
+    (!ProcessController(sk0,sk1,sk2))  | (!ProcessS0(sk0)) | (!ProcessS1(sk1)) | (!ProcessS2(sk2)))
